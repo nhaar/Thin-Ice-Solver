@@ -34,6 +34,9 @@ private:
     std::array<int, 2> _block_pos;
     std::array<int, 2> _puffle_pos;
     std::vector<Tile> _tiles;
+    int get_index(int x, int y) {
+        return _width * y + x;
+    }
 public:
     LevelMap(int width, int height, bool has_key, bool has_block, bool has_teleported, std::array<int, 2> key_pos, std::array<int, 2> block_pos, std::array<int, 2> puffle_pos, std::vector<Tile> tiles) :
         _width{width},
@@ -46,22 +49,28 @@ public:
         _puffle_pos{puffle_pos},
         _tiles{tiles} {}
 
-    LevelMap clone() {
-        std::array<int, 2> new_key = _key_pos;
-        std::array<int, 2> new_block = _block_pos;
-        std::array<int, 2> new_puffle = _puffle_pos;
-        std::vector<Tile> new_tile = _tiles;
-        return LevelMap(
-            _width,
-            _height,
-            _has_key,
-            _has_block,
-            _has_teleported,
-            new_key,
-            new_block,
-            new_puffle,
-            new_tile
-        );
+    Tile get_tile(int x, int y) {
+        return _tiles.at(get_index(x, y));
+    }
+
+    void change_tile(int x, int y, Tile tile) {
+        _tiles.at(get_index(x, y)) = tile;
+    }
+
+    int get_width() {
+        return _width;
+    }
+
+    int get_height() {
+        return _height;
+    }
+
+    std::array<int, 2> get_puffle_pos() {
+        return _puffle_pos;
+    }
+
+    void set_puffle_pos(int x, int y) {
+        _puffle_pos = std::array<int, 2> { x, y };
     }
 };
 
@@ -215,25 +224,88 @@ public:
     bool is_solved() {
         return true;
     }
-    Game(LevelMap map) : _level{map.clone()} {
+    Game(LevelMap map) : _level{map} {
 
     }
 };
 
 class BackwardsGame {
 private:
+    LevelMap* _original_level;
     LevelMap _level;
     std::vector<Direction> _directions;
     
 public:
+    bool is_in_spawn() {
+        std::array<int, 2> spawn = _original_level->get_puffle_pos();
+        std::array<int, 2> pos = _level.get_puffle_pos();
+        return spawn.at(0) && pos.at(0);
+    }
+
+    void undo_water_tile(int x, int y) {
+        _level.change_tile(x, y, Tile::ICE);
+    }
+
+    void undo_ice_tile(int x, int y) {
+        _level.change_tile(x, y, Tile::THICK);
+    }
+
+    void add_direction(Direction direction) {
+        _directions.push_back(direction);
+    }
+
+    void set_pos(int x, int y) {
+        _level.set_puffle_pos(x, y);
+    }
+
+    void try_add_new_game(std::vector<BackwardsGame>& list, int x, int y, Direction direction) {
+        Tile tile = _level.get_tile(x, y);
+        BackwardsGame new_game = *this;
+        new_game.add_direction(direction);
+        new_game.set_pos(x, y);
+        if (tile == Tile::WATER) {
+            new_game.undo_water_tile(x, y);
+            list.push_back(new_game);
+        } else if (tile == Tile::ICE) {
+            Tile original = _original_level->get_tile(x, y);
+            if (original == Tile::THICK) {
+                new_game.undo_ice_tile(x, y);
+                list.push_back(new_game);
+            }
+        } else if (tile == Tile::HOLE) {
+            list.push_back(new_game);
+        }
+    }
+
     std::vector<BackwardsGame> get_possible_backward_variations() {
-        return std::vector<BackwardsGame> {};
+        std::array<int, 2> pos = _level.get_puffle_pos();
+        int x = pos.at(0);
+        int y = pos.at(1);
+        std::vector<BackwardsGame> games = {};
+        try_add_new_game(games, x, y - 1, Direction::DOWN);
+        try_add_new_game(games, x, y + 1, Direction::UP);
+        try_add_new_game(games, x - 1, y, Direction::RIGHT);
+        try_add_new_game(games, x + 1, y, Direction::LEFT);
+        return games;
     }
     std::vector<Direction> get_directions() {
         return _directions;
     }
-    BackwardsGame(LevelMap map) : _level{map.clone()} {
+    BackwardsGame(LevelMap* original) : _original_level{original}, _level{*original} {
+        for (int y = 0; y < _level.get_height(); y++) {
+            for (int x = 0; x < _level.get_width(); x++) {
+                Tile tile = _level.get_tile(x, y);
+                if (tile == Tile::ICE || tile == Tile::THICK || tile == Tile::LOCK) {
+                    _level.change_tile(x, y, Tile::WATER);
+                } else if (tile == Tile::GOAL) {
+                    _level.set_puffle_pos(x, y);
+                }
+            }
+        }
     }
+
+    BackwardsGame(LevelMap* original, LevelMap current, std::vector<Direction> directions) :
+        _original_level{original}, _level{current}, _directions{directions} {}
 };
 
 int main(int argc, char* argv[]) {
@@ -251,7 +323,7 @@ int main(int argc, char* argv[]) {
 
     std::vector<std::vector<Direction>> found_solutions = {};
     std::vector<BackwardsGame> in_progress_games = {
-        BackwardsGame(initial_position)
+        BackwardsGame(&initial_position)
     };
     std::vector<BackwardsGame> queue = {};
 
@@ -259,7 +331,7 @@ int main(int argc, char* argv[]) {
     while (in_progress_games.size() > 0) {
         for (BackwardsGame game : in_progress_games) {
             std::vector<BackwardsGame> derived_games = game.get_possible_backward_variations();
-            if (derived_games.size() == 0) {
+            if (derived_games.size() == 0 && game.is_in_spawn()) {
                 found_solutions.push_back(game.get_directions());
             } else {
                 for (BackwardsGame derived_game : derived_games) {
@@ -293,6 +365,7 @@ int main(int argc, char* argv[]) {
     for (std::vector<Direction> solution : valid_solutions) {
         i += 1;
         out << "Solution #" << i << ": ";
+        std::reverse(solution.begin(), solution.end());
         for (Direction direction : solution) {
             std::string name;
             switch (direction) {
