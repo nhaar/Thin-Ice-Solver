@@ -491,7 +491,11 @@ int main(int argc, char* argv[]) {
     std::vector<BackwardsGame> queue = {};
 
     // step 3: keep unsolving games until all possibilities are finished
+    int step = 0;
     while (in_progress_games.size() > 0) {
+        std::cout << "Iteration: " << step << std::endl;
+        step++;
+        std::cout << "Number of instances " << in_progress_games.size() << std::endl;
         for (BackwardsGame game : in_progress_games) {
             std::vector<BackwardsGame> derived_games = game.get_possible_backward_variations();
             if (derived_games.size() == 0 && game.is_in_spawn()) {
