@@ -2,6 +2,7 @@
 #include <array>
 #include <iostream>
 #include <fstream>
+#include <chrono>
 
 class Grid {
 private:
@@ -474,8 +475,11 @@ std::vector<Solution> find_solutions(Game game) {
 }
 
 int main(int argc, char* argv[]) {
+    auto start_time = std::chrono::steady_clock::now();
+
     // step 1: loading data from file given as argument
     if (argc != 2) {
+        std::cout << "The program takes only one argument" << std::endl;
         return 1;
     }
     std::ifstream file(argv[1]);
@@ -513,6 +517,12 @@ int main(int argc, char* argv[]) {
         }
         out << std::endl;
     }
+
+    auto end_time = std::chrono::steady_clock::now();
+    std::chrono::duration<double> run_time = end_time - start_time;
+    std::cout << "Computation completed" << std::endl;
+    std::cout << "Solutions found: " << i << std::endl;
+    std::cout << "Elapsed time: " << run_time.count() << "s" << std::endl; 
 
     return 0;
 }
