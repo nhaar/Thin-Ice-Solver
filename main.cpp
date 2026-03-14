@@ -3,6 +3,103 @@
 #include <iostream>
 #include <fstream>
 
+class Grid {
+private:
+    std::vector<int> _grid;
+    int _width;
+    int _height;
+
+    int index(int x, int y) {
+        return y * _width + x;
+    }
+public:
+    Grid(int w, int h, std::vector<int> grid) : _width{w}, _height{h}, _grid{grid} {}
+
+    int at(int x, int y) {
+        return _grid.at(index(x, y));
+    }
+
+    int at(int i) {
+        return _grid.at(i);
+    }
+
+    void set(int x, int y, int value) {
+        _grid.at(index(x, y)) = value;
+    }
+
+    void set(int index, int value) {
+        _grid.at(index) = value;
+    }
+
+    int get_width() {
+        return _width;
+    }
+
+    int get_height() {
+        return _height;
+    }
+};
+
+// grid given can only have 0s or 1s (0 = walkable, 1 is unwalkable)
+bool is_only_one_island(Grid& grid) {
+    int x_0 = -1;
+    int y_0 = -1;
+
+    // checking for first block with value 0
+    for (int y = 0; y < grid.get_height(); y++) {
+        for (int x = 0; x < grid.get_width(); x++) {
+            if (grid.at(x, y) == 0) {
+                x_0 = x;
+                y_0 = y;
+                break;
+            }
+        }
+        if (y_0 != -1) {
+            break;
+        }
+    }
+    if (x_0 == -1) {
+        throw std::runtime_error("No walkable tile");
+    }
+
+    std::vector<int> coords = { y_0 * grid.get_width() + x_0 };
+    std::vector<int> queue = {};
+
+    int max = grid.get_height() * grid.get_width();
+
+    // keep going in adjacent blocks until it covers all blocks touchable
+    // leave their value as 2
+    // there will be disconnected islands if any value is stil 0
+    while (coords.size() > 0) {
+        for (int coord : coords) {
+            std::array<int, 4> neighbors = {
+                coord - 1, // left
+                coord + 1, // right
+                coord - grid.get_width(), // up
+                coord + grid.get_width() // down
+            };
+            grid.set(coord, 2);
+            for (int n : neighbors) {
+                if (n > 0 && n < max && grid.at(n) == 0) {
+                    queue.push_back(n);
+                }
+            }
+        }
+        coords = queue;
+        queue = {};
+    }
+
+    for (int y = 0; y < grid.get_height(); y++) {
+        for (int x = 0; x < grid.get_width(); x++) {
+            if (grid.at(x, y) == 0) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+
 enum Direction {
     UP,
     DOWN,
@@ -190,6 +287,21 @@ public:
     Solution get_moves() {
         return _moves;
     }
+
+    // function to evaluate if a given position can be solved or not
+    bool evaluate() {
+        std::vector<int> tiles = {};
+        for (int i = 0; i < _height * _width; i++) {
+            Tile tile = _tiles.at(i);
+            if (tile == Tile::WATER || tile == Tile::WALL) {
+                tiles.push_back(1);
+            } else {
+                tiles.push_back(0);
+            }
+        }
+        Grid grid = Grid(_width, _height, tiles);
+        return is_only_one_island(grid);
+    }
 };
 
 class DataParser {
@@ -349,7 +461,7 @@ std::vector<Solution> find_solutions(Game game) {
         for (Direction d : directions) {
             Game new_game = game;
             bool can_move = new_game.apply_move(d);
-            if (can_move) {
+            if (can_move && new_game.evaluate()) {
 
                 std::vector<Solution> found_sols = find_solutions(new_game);
                 for (Solution s : found_sols) {
