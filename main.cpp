@@ -161,6 +161,10 @@ public:
                 break;
         }
     }
+
+    int get_index(int width) {
+        return _y * width + _x;
+    }
 };
 
 using Solution = std::vector<Direction>;
@@ -219,6 +223,50 @@ class Game {
 
     void remove_lock(Coord pos) {
         change_tile(pos.get_x(), pos.get_y(), Tile::ICE);
+    }
+
+    bool has_dead_end() {
+        for (int i = 0; i < _width * _height; i++) {
+            // the tile the puffle is in isn't a dead end
+            if (_puffle_pos.get_index(_width) == i) {
+                continue;
+            }
+            Tile tile = _tiles.at(i);
+
+            // a dead end is either a Hole, Ice, Lock or Thick Ice
+            // surrounded by 3 walls (water or wall)
+            // and neighbor to one singular ice tile
+            if (!(tile == Tile::HOLE || tile == Tile::ICE || tile == Tile::THICK || tile == Tile::LOCK)) {
+                continue;
+            }
+            int escapes = 0;
+            bool adjacent_to_ice = false;
+            std::array<int, 4> neighbors = {
+                i - 1, // left
+                i + 1, // right
+                i - _width, // up
+                i + _width // down
+            };
+            int max = _width * _height;
+            for (int n : neighbors) {
+                if (n > 0 && n < max) {
+                    Tile tile = _tiles.at(n);
+                    if (tile != Tile::WALL && tile != Tile::WATER) {
+                        if (tile == Tile::ICE) {
+                            adjacent_to_ice = true;
+                        }
+                        escapes++;
+                    }
+                    if (escapes > 1) {
+                        break;
+                    }
+                }
+            }
+            if (adjacent_to_ice && escapes == 1) {
+                return true;
+            }
+        }
+        return false;
     }
 public:
     Game(int width, int height, bool has_key, bool has_block, Coord key_pos, Coord block_pos, Coord puffle_pos, std::vector<Tile> tiles) :
@@ -301,7 +349,7 @@ public:
             }
         }
         Grid grid = Grid(_width, _height, tiles);
-        return is_only_one_island(grid);
+        return is_only_one_island(grid) && !has_dead_end();
     }
 };
 
