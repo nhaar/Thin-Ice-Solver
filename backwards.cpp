@@ -1,0 +1,672 @@
+#include <vector>
+#include <array>
+#include <iostream>
+#include <fstream>
+#include <chrono>
+
+class Grid {
+private:
+    std::vector<int> _grid;
+    int _width;
+    int _height;
+
+    int index(int x, int y) {
+        return y * _width + x;
+    }
+public:
+    Grid(int w, int h, std::vector<int> grid) : _width{w}, _height{h}, _grid{grid} {}
+
+    int at(int x, int y) {
+        return _grid.at(index(x, y));
+    }
+
+    int at(int i) {
+        return _grid.at(i);
+    }
+
+    void set(int x, int y, int value) {
+        _grid.at(index(x, y)) = value;
+    }
+
+    void set(int index, int value) {
+        _grid.at(index) = value;
+    }
+
+    int get_width() {
+        return _width;
+    }
+
+    int get_height() {
+        return _height;
+    }
+};
+
+// grid given can only have 0s or 1s (0 = walkable, 1 is unwalkable)
+bool is_only_one_island(Grid& grid) {
+    int x_0 = -1;
+    int y_0 = -1;
+
+    // checking for first block with value 0
+    for (int y = 0; y < grid.get_height(); y++) {
+        for (int x = 0; x < grid.get_width(); x++) {
+            if (grid.at(x, y) == 0) {
+                x_0 = x;
+                y_0 = y;
+                break;
+            }
+        }
+        if (y_0 != -1) {
+            break;
+        }
+    }
+    if (x_0 == -1) {
+        return true;
+        throw std::runtime_error("No walkable tile");
+    }
+
+    std::vector<int> coords = { y_0 * grid.get_width() + x_0 };
+    std::vector<int> queue = {};
+
+    int max = grid.get_height() * grid.get_width();
+
+    // keep going in adjacent blocks until it covers all blocks touchable
+    // leave their value as 2
+    // there will be disconnected islands if any value is stil 0
+    while (coords.size() > 0) {
+        for (int coord : coords) {
+            std::array<int, 4> neighbors = {
+                coord - 1, // left
+                coord + 1, // right
+                coord - grid.get_width(), // up
+                coord + grid.get_width() // down
+            };
+            grid.set(coord, 2);
+            for (int n : neighbors) {
+                if (n > 0 && n < max && grid.at(n) == 0) {
+                    queue.push_back(n);
+                }
+            }
+        }
+        coords = queue;
+        queue = {};
+    }
+
+    for (int y = 0; y < grid.get_height(); y++) {
+        for (int x = 0; x < grid.get_width(); x++) {
+            if (grid.at(x, y) == 0) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+
+enum Direction {
+    UP,
+    DOWN,
+    RIGHT,
+    LEFT
+};
+
+enum Tile {
+    ICE,
+    WALL,
+    THICK,
+    WATER,
+    GOAL,
+    LOCK,
+    HOLE,
+    TELEPORTER
+};
+
+class Coord {
+private:
+    int _x;
+    int _y;
+
+public:
+    Coord(): _x{0}, _y{0} {}
+    Coord(int x, int y): _x{x}, _y{y} {}
+
+    bool is_equal(Coord& other) {
+        return _x == other.get_x() && _y == other.get_y();
+    }
+
+    int get_x() {
+        return _x;
+    }
+
+    int get_y() {
+        return _y;
+    }
+
+    void set(int x, int y) {
+        _x = x;
+        _y = y;
+    }
+
+    void advance_in_direction(Direction direction) {
+        switch (direction) {
+            case Direction::UP:
+                _y -= 1;
+                break;
+            case Direction::DOWN:
+                _y += 1;
+                break;
+            case Direction::LEFT:
+                _x -= 1;
+                break;
+            case Direction::RIGHT:
+                _x += 1;
+                break;
+        }
+    }
+
+    int get_index(int width) {
+        return _y * width + _x;
+    }
+};
+
+using Solution = std::vector<Direction>;
+
+bool is_tile_moveable(Tile tile) {
+    return !(tile == Tile::WALL || tile == Tile::WATER || tile == Tile::LOCK);
+}
+
+Direction opposite_direction(Direction d) {
+    switch (d) {
+        case Direction::LEFT:
+            return Direction::RIGHT;
+        case Direction::RIGHT:
+            return Direction::LEFT;
+        case Direction::UP:
+            return Direction::DOWN;
+        case Direction::DOWN:
+            return Direction::UP;
+        default:
+            throw std::runtime_error("Unknown direction");
+    }
+}
+
+class Game {
+    int _width;
+    int _height;
+    bool _has_key;
+    bool _has_block;
+    bool _has_teleported = false;
+    bool _picked_key = false;
+    std::vector<Direction> _moves = {};
+    Coord _key_pos;
+    Coord _block_pos;
+    Coord _puffle_pos;
+    Coord _spawn;
+    std::vector<Tile> _tiles;
+    std::vector<Tile> _original;
+
+    int get_index(int x, int y) {
+        return _width * y + x;
+    }
+    
+    Tile get_tile(int x, int y) {
+        return _tiles.at(get_index(x, y));
+    }
+
+    void change_tile(int x, int y, Tile tile) {
+        _tiles.at(get_index(x, y)) = tile;
+    }
+
+    void melt_tile(Coord new_pos) {
+        Tile tile = get_tile(_puffle_pos.get_x(), _puffle_pos.get_y());
+        if (tile == Tile::THICK) {
+            change_tile(_puffle_pos.get_x(), _puffle_pos.get_y(), Tile::ICE);
+        } else if (tile == Tile::ICE) {
+            change_tile(_puffle_pos.get_x(), _puffle_pos.get_y(), Tile::WATER);
+        }
+        _puffle_pos = new_pos;
+    }
+
+    Coord find_other_portal(Coord this_portal) {
+        for (int y = 0; y < _height; y++) {
+            for (int x = 0; x < _width; x++) {
+                Tile tile = get_tile(x, y);
+                Coord coord = Coord(x, y);
+                if (tile == Tile::TELEPORTER && !this_portal.is_equal(coord)) {
+                    return coord;
+                }
+            }
+        }
+        throw std::runtime_error("Could not find other portal");
+    }
+
+    void remove_lock(Coord pos) {
+        change_tile(pos.get_x(), pos.get_y(), Tile::ICE);
+    }
+
+    bool has_dead_end() {
+        for (int i = 0; i < _width * _height; i++) {
+            // the tile the puffle is in isn't a dead end
+            if (_puffle_pos.get_index(_width) == i) {
+                continue;
+            }
+            Tile tile = _tiles.at(i);
+
+            // a dead end is either a Hole, Ice, Lock or Thick Ice
+            // surrounded by 3 walls (water or wall)
+            // and neighbor to one singular ice tile
+            if (!(tile == Tile::HOLE || tile == Tile::ICE || tile == Tile::THICK || tile == Tile::LOCK)) {
+                continue;
+            }
+            int escapes = 0;
+            bool adjacent_to_ice = false;
+            std::array<int, 4> neighbors = {
+                i - 1, // left
+                i + 1, // right
+                i - _width, // up
+                i + _width // down
+            };
+            int max = _width * _height;
+            for (int n : neighbors) {
+                if (n > 0 && n < max) {
+                    Tile tile = _tiles.at(n);
+                    if (tile != Tile::WALL && tile != Tile::WATER) {
+                        if (tile == Tile::ICE) {
+                            adjacent_to_ice = true;
+                        }
+                        escapes++;
+                    }
+                    if (escapes > 1) {
+                        break;
+                    }
+                }
+            }
+            if (adjacent_to_ice && escapes == 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+public:
+    Game(int width, int height, bool has_key, bool has_block, Coord key_pos, Coord block_pos, Coord puffle_pos, std::vector<Tile> tiles) :
+        _width{width},
+        _height{height},
+        _has_key{has_key},
+        _has_block{has_block},
+        _key_pos{key_pos},
+        _block_pos{block_pos},
+        _puffle_pos{puffle_pos},
+        _tiles{tiles},
+        _spawn{puffle_pos} {
+            std::vector<Tile> new_tiles = _tiles;
+            _original = new_tiles;
+        }
+
+    bool is_solved() {
+        for (Tile tile : _tiles) {
+            if (tile == Tile::ICE || tile == Tile::THICK || tile == Tile::LOCK) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool apply_move(Direction direction) {
+        _moves.push_back(direction);
+        Coord new_pos = _puffle_pos;
+        new_pos.advance_in_direction(direction);
+        // check for block
+        if (_has_block && _block_pos.is_equal(new_pos)) {
+            Coord new_block_pos = _block_pos;
+            Coord final_block_pos = new_block_pos;
+            new_block_pos.advance_in_direction(direction);
+            Tile block_tile = get_tile(new_block_pos.get_x(), new_block_pos.get_y());
+            bool moved = false;
+            while (is_tile_moveable(block_tile)) {
+                final_block_pos = new_block_pos;
+                moved = true;
+                new_block_pos.advance_in_direction(direction);
+                block_tile = get_tile(new_block_pos.get_x(), new_block_pos.get_y());
+            }
+            if (moved) {
+                _block_pos = final_block_pos;
+                melt_tile(new_pos);
+            }
+            return true;
+        } else {
+            Tile tile = get_tile(new_pos.get_x(), new_pos.get_y());
+            if (is_tile_moveable(tile)) {
+                melt_tile(new_pos);
+                if (tile == Tile::TELEPORTER && !_has_teleported) {
+                    Coord destination = find_other_portal(new_pos);
+                    _puffle_pos = destination;
+                }
+                if (_has_key && !_picked_key && _key_pos.is_equal(new_pos)) {
+                    _picked_key = true;
+                }
+                return true;
+            } else if (tile == Tile::LOCK && _picked_key) {
+                _picked_key = false;
+                remove_lock(new_pos);
+                melt_tile(new_pos);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    Solution get_moves() {
+        return _moves;
+    }
+
+    // function to evaluate if a given position can be solved or not
+    bool evaluate() {
+        std::vector<int> tiles = {};
+        for (int i = 0; i < _height * _width; i++) {
+            Tile tile = _tiles.at(i);
+            if (tile == Tile::WATER) {
+                tiles.push_back(0);
+            } else if (tile == Tile::ICE) {
+                if (_original.at(i) == Tile::THICK) {
+                    tiles.push_back(0);
+                } else {
+                    tiles.push_back(1);
+                }
+            } else {
+                tiles.push_back(1);
+            }
+        }
+        Grid grid = Grid(_width, _height, tiles);
+        return is_only_one_island(grid);
+    }
+
+    bool unapply_move(Direction d) {
+        // Coord current_pos = _puffle_pos;
+        Coord target_pos = _puffle_pos;
+        target_pos.advance_in_direction(d);
+        Tile target = _tiles.at(target_pos.get_index(_width));
+        int target_index = target_pos.get_index(_width);
+        Tile new_tile;
+        bool apply = false;
+        if (target == Tile::WATER) {
+            apply = true;
+            new_tile = Tile::ICE;
+        } else if (target == Tile::ICE) {
+            Tile original_tile = _original.at(target_index);
+            if (original_tile == Tile::THICK) {
+                apply = true;
+                new_tile = Tile::THICK;
+            }
+        }
+        if (apply) {
+            _puffle_pos = target_pos;
+            _tiles.at(target_index) = new_tile;
+            _moves.push_back(opposite_direction(d));
+            return true;
+        }
+        return false;
+    }
+
+    bool is_start(bool ignore_lock) {
+        if (!_puffle_pos.is_equal(_spawn)) {
+            return false;
+        }
+
+        for (int y = 0; y < _height; y++) {
+            for (int x = 0; x < _width; x++) {
+                int i = get_index(x, y);
+                Tile n = _tiles.at(i);
+                Tile o = _original.at(i);
+                if (ignore_lock && o == Tile::LOCK) {
+                    if (n != Tile::ICE) {
+                        return false;
+                    }
+                } else if (_tiles.at(i) != _original.at(i)) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    void solve() {
+        Coord goal;
+        for (int y = 0; y < _height; y++) {
+            for (int x = 0; x < _width; x++) {
+                int index = get_index(x, y);
+                Tile tile = _tiles.at(index);
+                if (tile == Tile::GOAL) {
+                    goal = Coord(x, y);
+                } else if (tile == Tile::ICE || tile == Tile::THICK || tile == Tile::LOCK) {
+                    _tiles.at(index) = Tile::WATER;
+                }
+            }
+        }
+        _puffle_pos = goal;
+    }
+};
+
+class DataParser {
+private:
+    int _index = 0;
+    int _width = 0;
+    int _height = 0;
+    bool _spawn_set = false;
+    bool _key_set = false;
+    bool _block_set = false;
+    bool _tiles_set = false;
+    Coord _spawn;
+    Coord _key;
+    Coord _block;
+    std::vector<Tile> _tiles;
+    std::string _data;
+
+    char get_char() {
+        return _data[_index];
+    }
+
+public:
+    DataParser(std::string data) : _data{data} {
+
+    }
+
+    Coord parse_coord(std::string data) {
+        std::string x = "";
+        std::string y = "";
+        bool x_done = false;
+        for (char c : data) {
+            if (c == ',') {
+                x_done = true;
+            } else {
+                if (x_done) {
+                    y += c;
+                } else {
+                    x += c;
+                }
+            }
+        }
+        return Coord(std::stoi(x), std::stoi(y));
+    }
+
+    std::vector<Tile> parse_tiles(std::string data) {
+        std::vector<Tile> tiles = {};
+        for (char c : data) {
+            Tile tile;
+            switch (c) {
+                case 'I':
+                    tile = Tile::ICE;
+                    break;
+                case 'W':
+                    tile = Tile::WALL;
+                    break;
+                case 'T':
+                    tile = Tile::THICK;
+                    break;
+                case 'G':
+                    tile = Tile::GOAL;
+                    break;
+                case 'L':
+                    tile = Tile::LOCK;
+                    break;
+                case 'H':
+                    tile = Tile::HOLE;
+                    break;
+                case 'P':
+                    tile = Tile::TELEPORTER;
+                    break;
+                default:
+                    throw std::runtime_error("Invalid tile type: " + c);
+            }
+            tiles.push_back(tile);
+        }
+        
+        return tiles;
+    }
+
+    void parse_line() {
+        bool key_done = false;
+        std::string key = "";
+        std::string value = "";
+        while (_index < _data.length()) {
+            char c = _data[_index];
+            if (c == '=') {
+                key_done = true;
+            } else if (c == '\n') {
+                _index++;
+                break;
+            } else {
+                if (key_done) {
+                    value += c;
+                } else {
+                    key += c;
+                }
+            }
+            _index++;
+        }
+
+        if (key == "width") {
+            _width = std::stoi(value);
+        } else if (key == "height") {
+            _height = std::stoi(value);
+        } else if (key == "spawn") {
+            _spawn_set = true;
+            _spawn = parse_coord(value);
+        } else if (key == "key") {
+            _key_set = true;
+            _key = parse_coord(value);
+        } else if (key == "block") {
+            _block_set = true;
+            _block = parse_coord(value);
+        } else if (key == "tiles") {
+            _tiles_set = true;
+            _tiles = parse_tiles(value);   
+        }
+    }
+
+    Game parse() {
+        while (_index < _data.length()) {
+            parse_line();
+        }
+        if (!_spawn_set) {
+            throw std::runtime_error("No spawn point in level");
+        }
+        if (!_tiles_set) {
+            throw std::runtime_error("No tiles defined");
+        }
+        if (_width == 0 || _height == 0) {
+            throw std::runtime_error("Map dimensions not set");
+        }
+        return Game(
+            _width,
+            _height,
+            _key_set,
+            _block_set,
+            _key,
+            _block,
+            _spawn,
+            _tiles
+        );
+    }
+};
+int i = 0;
+std::vector<Solution> find_solutions(Game game) {
+    if (game.is_start(true)) {
+        i++;
+        std::cout << "solution: " << i << std::endl;
+        return {game.get_moves()};
+    } else {
+        std::vector<Solution> solutions = {};
+        std::array<Direction, 4> directions = {
+            Direction::UP,
+            Direction::RIGHT,
+            Direction::DOWN,
+            Direction::LEFT
+        };
+        for (Direction d : directions) {
+            Game new_game = game;
+            bool can_unmove = new_game.unapply_move(d);
+            if (can_unmove && new_game.evaluate()) {
+                std::vector<Solution> found_sols = find_solutions(new_game);
+                for (Solution s : found_sols) {
+                    solutions.push_back(s);
+                }
+            }
+        }
+        return solutions;
+    }
+}
+
+int main(int argc, char* argv[]) {
+    auto start_time = std::chrono::steady_clock::now();
+
+    // step 1: loading data from file given as argument
+    if (argc != 2) {
+        std::cout << "The program takes only one argument" << std::endl;
+        return 1;
+    }
+    std::ifstream file(argv[1]);
+    std::string input_file  { std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>() };
+
+    DataParser parser = DataParser(input_file);
+
+    // step 2: create the base game that will be unsolved
+    Game start = parser.parse();
+    start.solve();
+
+    std::vector<Solution> found_solutions = find_solutions(start);
+    // step 3: output all the solutions
+    std::ofstream out("output.txt");
+    int i = 0;
+    for (std::vector<Direction> solution : found_solutions) {
+        i += 1;
+        out << "Solution #" << i << ": ";
+        for (Direction direction : solution) {
+            std::string name;
+            switch (direction) {
+                case Direction::UP:
+                    name = "U";
+                    break;
+                case Direction::DOWN:
+                    name = "D";
+                    break;
+                case Direction::LEFT:
+                    name = "L";
+                    break;
+                case Direction::RIGHT:
+                    name = "R";
+                    break;
+            }
+            out << name;
+        }
+        out << std::endl;
+    }
+
+    auto end_time = std::chrono::steady_clock::now();
+    std::chrono::duration<double> run_time = end_time - start_time;
+    std::cout << "Computation completed" << std::endl;
+    std::cout << "Solutions found: " << i << std::endl;
+    std::cout << "Elapsed time: " << run_time.count() << "s" << std::endl; 
+
+    return 0;
+}
